@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 
 const ELEVENLABS_STT_URL = 'https://api.elevenlabs.io/v1/speech-to-text'
+const DEFAULT_MODEL = 'scribe_v2'
 
 export async function POST(req: Request) {
   const apiKey = process.env.ELEVENLABS_API_KEY
@@ -20,7 +21,7 @@ export async function POST(req: Request) {
     new Blob([buffer], { type: contentType }),
     'clip.webm',
   )
-  form.append('model_id', 'eleven_multilingual_v2')
+  form.append('model_id', DEFAULT_MODEL)
   form.append('language_code', 'en')
 
   const response = await fetch(ELEVENLABS_STT_URL, {
