@@ -18,11 +18,17 @@ export default function Home() {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
+  const [resetting, setResetting] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
+  const [liveListening, setLiveListening] = useState(false)
   const [listeningError, setListeningError] = useState<string | null>(null)
   const [name, setName] = useState('guest')
   const recorderRef = useRef<MediaRecorder | null>(null)
+  const liveRecorderRef = useRef<MediaRecorder | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
+  const liveStreamRef = useRef<MediaStream | null>(null)
+  const chunkQueueRef = useRef<Blob[]>([])
+  const processingRef = useRef(false)
   const chatRef = useRef<HTMLDivElement | null>(null)
 
   const scrollToBottom = useCallback(() => {
@@ -117,6 +123,57 @@ export default function Home() {
     setSending(false)
   }
 
+  const postTranscribedMessage = useCallback(
+    async (text: string) => {
+      const res = await fetch('/api/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: text, author: name }),
+      })
+      if (res.ok) {
+        const data = (await res.json()) as { message?: Message }
+        if (data.message) {
+          appendMessage(data.message)
+        }
+      }
+    },
+    [appendMessage, name],
+  )
+
+  const processChunkQueue = useCallback(async () => {
+    if (processingRef.current) return
+    processingRef.current = true
+
+    while (chunkQueueRef.current.length) {
+      const blob = chunkQueueRef.current.shift()
+      if (!blob) break
+
+      const res = await fetch('/api/transcribe', {
+        method: 'POST',
+        headers: { 'content-type': 'audio/webm' },
+        body: blob,
+      })
+
+      if (res.ok) {
+        const { text } = (await res.json()) as { text?: string }
+        if (text && text.trim()) {
+          await postTranscribedMessage(text.trim())
+        }
+      }
+    }
+
+    processingRef.current = false
+  }, [postTranscribedMessage])
+
+  const handleReset = async () => {
+    setResetting(true)
+    const res = await fetch('/api/messages', { method: 'DELETE' })
+    if (res.ok) {
+      setMessages([])
+    }
+    setResetting(false)
+  }
+
   const startRecording = async () => {
     setListeningError(null)
     try {
@@ -165,6 +222,45 @@ export default function Home() {
     }
   }
 
+  const startLiveTranscription = async () => {
+    setListeningError(null)
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      liveStreamRef.current = stream
+      const recorder = new MediaRecorder(stream)
+      liveRecorderRef.current = recorder
+
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) {
+          chunkQueueRef.current.push(e.data)
+          void processChunkQueue()
+        }
+      }
+
+      recorder.onstop = () => {
+        stream.getTracks().forEach((track) => track.stop())
+        liveStreamRef.current = null
+        liveRecorderRef.current = null
+        chunkQueueRef.current = []
+        processingRef.current = false
+        setLiveListening(false)
+      }
+
+      recorder.start(3000) // send small chunks to keep latency low-ish
+      setLiveListening(true)
+    } catch {
+      setListeningError('Microphone access failed')
+    }
+  }
+
+  const stopLiveTranscription = () => {
+    if (liveRecorderRef.current && liveRecorderRef.current.state !== 'inactive') {
+      liveRecorderRef.current.stop()
+    } else {
+      setLiveListening(false)
+    }
+  }
+
   const formattedTime = (iso: string) =>
     new Date(iso).toLocaleTimeString(undefined, {
       hour: '2-digit',
@@ -178,15 +274,26 @@ export default function Home() {
           <p className="text-sm uppercase tracking-[0.3em] text-slate-400">
             UMP Multiplayer Chat
           </p>
-          <h1 className="text-4xl font-semibold leading-tight text-white sm:text-5xl">
-            One room. Shared history. Speak or type to join.
-          </h1>
-          <p className="max-w-2xl text-slate-300">
-            Everyone sees the same stream of messages. Voice input is powered by
-            ElevenLabs and messages are persisted in Supabase.
-          </p>
-          <div className="text-sm text-slate-400">
-            You are chatting as <span className="text-white">{name}</span>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex-1">
+              <h1 className="text-4xl font-semibold leading-tight text-white sm:text-5xl">
+                One room. Shared history. Speak or type to join.
+              </h1>
+              <p className="mt-2 max-w-2xl text-slate-300">
+                Everyone sees the same stream of messages. Voice input is powered by
+                ElevenLabs and messages are persisted in Supabase.
+              </p>
+              <div className="text-sm text-slate-400">
+                You are chatting as <span className="text-white">{name}</span>
+              </div>
+            </div>
+            <button
+              onClick={handleReset}
+              disabled={resetting}
+              className="w-full max-w-xs rounded-full border border-red-400/50 bg-red-500/15 px-4 py-2 text-sm font-semibold text-red-100 shadow-lg shadow-red-500/20 transition hover:border-red-300 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {resetting ? 'Resetting...' : 'Reset chat history'}
+            </button>
           </div>
         </header>
 
@@ -240,6 +347,16 @@ export default function Home() {
                 title="Hold to record"
               >
                 {isRecording ? '■' : '🎤'}
+              </button>
+              <button
+                onClick={liveListening ? stopLiveTranscription : startLiveTranscription}
+                className={`rounded-full border px-4 py-3 text-sm font-semibold transition ${
+                  liveListening
+                    ? 'border-amber-300/60 bg-amber-500/20 text-amber-100 shadow-inner shadow-amber-500/20'
+                    : 'border-slate-700 bg-slate-800 text-slate-100 hover:border-indigo-400'
+                }`}
+              >
+                {liveListening ? 'Stop live mic' : 'Live mic (auto-send)'}
               </button>
               <button
                 onClick={handleSend}

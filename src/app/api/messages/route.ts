@@ -45,3 +45,19 @@ export async function POST(req: Request) {
 
   return NextResponse.json({ message: data })
 }
+
+export async function DELETE() {
+  const { error } = await supabaseAdmin
+    .from('messages')
+    .delete()
+    .neq('id', '') // simple filter to target all rows
+
+  if (error) {
+    return NextResponse.json(
+      { error: 'Failed to reset messages', details: error.message },
+      { status: 500 },
+    )
+  }
+
+  return NextResponse.json({ success: true })
+}
