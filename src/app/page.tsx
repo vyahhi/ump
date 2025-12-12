@@ -1,7 +1,6 @@
 "use client"
 
-import { supabase } from '@/lib/supabaseClient'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 type Message = {
   id: string
@@ -21,71 +20,98 @@ export default function Home() {
   const [sending, setSending] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
   const [listeningError, setListeningError] = useState<string | null>(null)
+  const [name, setName] = useState('guest')
   const recorderRef = useRef<MediaRecorder | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const chatRef = useRef<HTMLDivElement | null>(null)
 
-  const name = useMemo(() => {
-    if (typeof window === 'undefined') return randomName()
-    const stored = localStorage.getItem('ump_name')
-    if (stored) return stored
-    const next = randomName()
-    localStorage.setItem('ump_name', next)
-    return next
-  }, [])
-
-  useEffect(() => {
-    const scrollToBottom = () => {
-      if (chatRef.current) {
-        chatRef.current.scrollTop = chatRef.current.scrollHeight
-      }
-    }
-
-    const loadMessages = async () => {
-      const { data, error } = await supabase
-        .from('messages')
-        .select('*')
-        .order('created_at', { ascending: true })
-
-      if (!error && data) {
-        setMessages(data as Message[])
-        scrollToBottom()
-      }
-    }
-
-    loadMessages()
-
-    const channel = supabase
-      .channel('messages-stream')
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'messages' },
-        (payload) => {
-          setMessages((prev) => [...prev, payload.new as Message])
-          scrollToBottom()
-        },
-      )
-      .subscribe()
-
-    return () => {
-      supabase.removeChannel(channel)
-    }
-  }, [])
-
-  useEffect(() => {
+  const scrollToBottom = useCallback(() => {
     if (chatRef.current) {
       chatRef.current.scrollTop = chatRef.current.scrollHeight
     }
-  }, [messages.length])
+  }, [])
+
+  const appendMessage = useCallback(
+    (incoming: Message) => {
+      setMessages((prev) => {
+        if (prev.some((msg) => msg.id === incoming.id)) return prev
+        return [...prev, incoming]
+      })
+    },
+    [setMessages],
+  )
+
+  /* eslint-disable react-hooks/set-state-in-effect */
+  useEffect(() => {
+    // We only read from localStorage on the client to avoid hydration mismatches.
+    const stored = localStorage.getItem('ump_name')
+    if (stored) {
+      setName(stored)
+      return
+    }
+    const next = randomName()
+    localStorage.setItem('ump_name', next)
+    setName(next)
+  }, [])
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  useEffect(() => {
+    let closed = false
+    let events: EventSource | null = null
+
+    const loadMessages = async () => {
+      const res = await fetch('/api/messages')
+      if (!res.ok) return
+      const data = (await res.json()) as { messages?: Message[] }
+      if (!closed && data.messages) {
+        setMessages(data.messages)
+      }
+    }
+
+    const init = async () => {
+      await loadMessages()
+      if (closed) return
+
+      events = new EventSource('/api/messages/stream')
+      events.onmessage = (event) => {
+        try {
+          const parsed = JSON.parse(event.data) as Message
+          appendMessage(parsed)
+        } catch {
+          // Ignore malformed event payloads
+        }
+      }
+      events.onerror = () => {
+        events?.close()
+      }
+    }
+
+    void init()
+
+    return () => {
+      closed = true
+      events?.close()
+    }
+  }, [appendMessage])
+
+  useEffect(() => {
+    scrollToBottom()
+  }, [messages.length, scrollToBottom])
 
   const handleSend = async () => {
     if (!input.trim()) return
     setSending(true)
-    const { error } = await supabase.from('messages').insert({
-      content: input.trim(),
-      author: name,
+    const res = await fetch('/api/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: input.trim(), author: name }),
     })
-    if (!error) {
+
+    if (res.ok) {
+      const data = (await res.json()) as { message?: Message }
+      if (data.message) {
+        appendMessage(data.message)
+      }
       setInput('')
     }
     setSending(false)

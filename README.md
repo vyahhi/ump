@@ -9,11 +9,11 @@ A single-room chat built with Next.js, Supabase realtime, and ElevenLabs speech-
    npm install
    ```
 2. Configure environment:
-   - Copy `.env.example` to `.env.local`.
+   - Copy `.env.example` to `.env.local` (create it if missing).
    - Fill in:
-     - `NEXT_PUBLIC_SUPABASE_URL`
-     - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-     - `ELEVENLABS_API_KEY` (kept server-side; used by `/api/transcribe`).
+     - `SUPABASE_URL`
+     - `SUPABASE_SERVICE_ROLE_KEY` (server-only; used by the API routes)
+     - `ELEVENLABS_API_KEY` (server-only; used by `/api/transcribe`).
 3. Create the Supabase table (MCP or SQL):
    ```sql
    create table if not exists public.messages (
