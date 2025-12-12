@@ -14,6 +14,12 @@ const randomName = () =>
     .toString(36)
     .slice(2, 4)}`
 
+const preferredMimeType =
+  typeof MediaRecorder !== 'undefined' &&
+  MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+    ? 'audio/webm;codecs=opus'
+    : undefined
+
 export default function Home() {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
@@ -179,7 +185,10 @@ export default function Home() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       streamRef.current = stream
-      const recorder = new MediaRecorder(stream)
+      const recorder = new MediaRecorder(
+        stream,
+        preferredMimeType ? { mimeType: preferredMimeType } : undefined,
+      )
       const chunks: BlobPart[] = []
       recorderRef.current = recorder
 
@@ -227,7 +236,10 @@ export default function Home() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       liveStreamRef.current = stream
-      const recorder = new MediaRecorder(stream)
+      const recorder = new MediaRecorder(
+        stream,
+        preferredMimeType ? { mimeType: preferredMimeType } : undefined,
+      )
       liveRecorderRef.current = recorder
 
       recorder.ondataavailable = (e) => {

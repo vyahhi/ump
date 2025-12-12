@@ -12,7 +12,8 @@ export async function POST(req: Request) {
     )
   }
 
-  const contentType = req.headers.get('content-type') || 'audio/webm'
+  const contentType =
+    req.headers.get('content-type') || 'audio/webm;codecs=opus'
   const buffer = Buffer.from(await req.arrayBuffer())
 
   const form = new FormData()
